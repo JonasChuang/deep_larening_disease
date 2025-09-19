@@ -615,7 +615,7 @@ def main():
     n_test = int(len(idx)*TEST_SIZE)
     n_val  = int((len(idx)-n_test)*VAL_SIZE)
     te_idx = idx[:n_test]; va_idx = idx[n_test:n_test+n_val]; tr_idx = idx[n_test+n_val:]
-
+    #驗證集 Xva、測試集 Xte
     Xtr, Xva, Xte = X[tr_idx], X[va_idx], X[te_idx]
     ytr, yva, yte = y[tr_idx], y[va_idx], y[te_idx]
 
@@ -635,13 +635,16 @@ def main():
                callbacks=cbs,
                verbose=2)
 
-    print("==> 評估")
+    
     va_prob = model.predict(Xva, batch_size=256).ravel()
     te_prob = model.predict(Xte, batch_size=256).ravel()# 模型預測
+    #model.predict: 驗證集每個樣本的 預測機率(0~1)
+
+    print("==> 評估")
     val_metrics = eval_block(yva, va_prob, "VAL")
     test_metrics= eval_block(yte, te_prob, "TEST")# 真實標籤
-    plot_eval_metrics(val_metrics, tag="VAL")
-    plot_eval_metrics(test_metrics, tag="TEST")
+    plot_eval_metrics(val_metrics, tag="VAL")#驗證集
+    plot_eval_metrics(test_metrics, tag="TEST")#測試集
 
     plot_eval_radar([val_metrics, test_metrics], ["VAL","TEST"])
 
@@ -654,8 +657,8 @@ def main():
         json.dump({"val":val_metrics, "test":test_metrics, "features":feat_cols,
                    "seq_hours": SEQ_HOURS, "label_window":[LBL_FROM, LBL_TO],
                    "k_cutoff": K_CUTOFF}, f, ensure_ascii=False, indent=2)
-    np.save(os.path.join(mdir, "test_prob.npy"), te_prob)
-    np.save(os.path.join(mdir, "test_y.npy"),   yte)
+    np.save(os.path.join(mdir, "test_prob.npy"), te_prob)#模型預測值
+    np.save(os.path.join(mdir, "test_y.npy"),   yte)#這是測試集的 真實標籤 (ground truth)，通常是 0 或 1
     # te_prob:
     # 測試集每個樣本的 預測機率 (通常是 sigmoid 輸出的值，介於 0~1)。
     # 存成 test_prob.npy，方便後續做 ROC、PR、Calibration、SHAP 分析。
@@ -671,3 +674,29 @@ def main():
 
 
 
+# 訓練深度學習模型（例如用 MIMIC ICU 病人做 CKD / 低鈉 / 敗血症預測）分成三個集合：
+# 1️⃣ 訓練集 (Training set)
+# 用來 訓練模型參數（例如 GRU 裡的權重）。
+# 模型會一邊看訓練集、一邊更新權重，讓 loss 下降。
+
+# 2️⃣ 驗證集 (Validation set)
+# 不參與訓練，只在 每個 epoch 結束後用來檢查模型表現。
+# 功能：
+# 幫助你調整 超參數（learning rate、batch size、dropout…）。
+# 早停 (early stopping)：如果驗證集 loss 開始上升，代表模型 overfitting，要停下來。
+# 選擇最佳模型 checkpoint。
+# ✅ 重點：驗證集模擬「模型在沒看過的新資料」的表現，但它仍然參與調參。
+
+# 3️⃣ 測試集 (Test set)
+# 完全獨立，最後才用。
+# 不會用來訓練，也不會用來調參。
+# 目的是：模擬「真實世界未來病人」的狀況，評估模型的 最終泛化能力。
+# 只在你模型確定好（hyperparameters fixed）後，才會對測試集做評估並報告 AUC / AUPRC / F1。
+
+# 🔎 舉例（MIMIC-IV CKD ICU 低鈉預測）
+
+# 有 10,000 個 ICU stay。
+# 可能切法
+# 訓練集 (Train)：70% → 用來學習權重。
+# 驗證集 (Validation)：15% → 用來調參、early stopping。
+# 測試集 (Test)：15% → 只用一次，最後報告結果。
