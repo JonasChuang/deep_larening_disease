@@ -2,7 +2,7 @@
 
 import os
 from sqlalchemy import create_engine
-from Hyperkalemia import Hyperkalemia,shap_view  #高血鉀 預測
+from Hyperkalemia import Hyperkalemia  #高血鉀 預測
 
 # ======== 使用者設定（可用環境變數覆寫） ========
 USER = os.getenv("MIMIC_MYSQL_USER", "user")
