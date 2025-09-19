@@ -91,44 +91,11 @@ def run_df(sql: str, params: Dict=None) -> pd.DataFrame:
 def make_cohort():
     # 以 ICU 入室為對齊（若改成入院，請把 icustays 改 admissions，t0=admittime）
     # intime 入ICU 時間
-    with ENG.connect() as connection:
-        labels = ",".join([f"'{x}'" for x in VITAL_LABELS])
-        limit = " LIMIT 5000" if QUICK_TEST else ""
-
-        #make_cohort
-        connection.execute(text("DROP TEMPORARY TABLE IF EXISTS tmp_stays"))
-
-        SQL= f"""
-        CREATE TEMPORARY TABLE tmp_stays AS
-        
-        SELECT i.subject_id, i.hadm_id, i.stay_id,
-            i.intime AS t0,
-            TIMESTAMPADD(HOUR, :seqh,  i.intime) AS t_end,
-            TIMESTAMPADD(HOUR, :lblf, i.intime) AS lbl_from,
-            TIMESTAMPADD(HOUR, :lblt, i.intime) AS lbl_to
-        FROM icustays i
-                INNER join patients  on(patients.subject_id =i.subject_id  )
-        where i.subject_id in(
-            -- 2014 ~2022 年病患
-        SELECT p.subject_id
-        FROM patients p 
-        -- where anchor_year_group in('2020 - 2022','2014 - 2016')
-        where anchor_year_group in('2020 - 2022')
-        )
-
-        {limit}
-        
-
-        """
+    
     #大母體
     stays = pd.read_sql_query(text("SELECT * FROM icu_adm_view"), ENG)
     stays.to_csv("Hyperkalemia/CSV/icu_adm_view.csv", index=False, encoding="utf-8-sig")
-       
-        
 
-
-        
-    
     #fetch_chartevents
     SQL = f"""
     SELECT ce.stay_id, ce.charttime, UPPER(di.label) AS label, ce.valuenum
@@ -140,8 +107,6 @@ def make_cohort():
     AND ce.valuenum IS NOT NULL
     AND ce.valuenum REGEXP '^[0-9]+$' AND CAST(ce.valuenum AS UNSIGNED) > 1
     
-    
-    {limit}
     """
 
 
@@ -160,7 +125,7 @@ def make_cohort():
         AND UPPER(dl.label) IN ('SODIUM', 'BICARBONATE', 'CHLORIDE', 'CREATININE', 'UREA NITROGEN', 'GLUCOSE')
         AND le.valuenum REGEXP '^[0-9]+(\\.[0-9]+)?$'
         -- AND le.valuenum REGEXP '^[0-9]+$' AND CAST(le.valuenum AS UNSIGNED) > 1
-    {limit}
+
     """
     fetch_labevents = pd.read_sql(text(SQL), ENG)
     fetch_labevents.to_csv("Hyperkalemia/CSV/fetch_labevents.csv", index=False, encoding="utf-8-sig")
@@ -176,7 +141,7 @@ def make_cohort():
         AND UPPER(di.label) LIKE '%URINE%'
         AND oe.value REGEXP '^[0-9]+(\\.[0-9]+)?$'
         -- AND oe.value REGEXP '^[0-9]+$' AND CAST(oe.value AS UNSIGNED) > 1
-    {limit}
+ 
     """
     URINE = pd.read_sql(text(SQL), ENG)
     URINE.to_csv("Hyperkalemia/CSV/URINE.csv", index=False, encoding="utf-8-sig")
@@ -203,10 +168,24 @@ def make_cohort():
     POTASSIUM.to_csv("Hyperkalemia/CSV/POTASSIUM.csv", index=False, encoding="utf-8-sig")
     print("POTASSIUM OK")
 
+    SQL = """
+      -- 低鈉母體
+       SELECT s.stay_id,
+             MAX(CASE WHEN le.valuenum <= 130 THEN 1 ELSE 0 END) AS y_hypona
+      FROM icu_adm_view s
+      JOIN labevents le FORCE INDEX (idx_hadm_item_time_val) ON le.hadm_id = s.hadm_id
+      JOIN d_labitems dl ON dl.itemid = le.itemid
+      WHERE  le.charttime >= s.lbl_from AND le.charttime < s.lbl_to
+       AND UPPER(dl.label) LIKE '%SODIUM%'
+       AND le.valuenum REGEXP '^[0-9]+(\\.[0-9]+)?$'
+  
+       GROUP BY s.stay_id
+      
+    """
+    low_sodium = pd.read_sql(text(SQL), ENG)
+    low_sodium.to_csv("Hyperkalemia/CSV/low_sodium.csv", index=False, encoding="utf-8-sig")
+
     
-
-
-
     return 0
 
         
@@ -523,9 +502,9 @@ def main():
     X, feat_cols, sid_df = build_tensor2(char_h, lab_h, ur_h, stays)
 
     print("==> 取標籤（24–48h 高血鉀）")
-    #ydf = fetch_label()
-    #ydf = data["POTASSIUM"]#
-    ydf = pd.read_csv("Hyperkalemia/CSV/POTASSIUM.csv")
+ 
+    #ydf = pd.read_csv("Hyperkalemia/CSV/POTASSIUM.csv")#高血鉀
+    ydf = pd.read_csv("Hyperkalemia/CSV/low_sodium.csv")#低鈉
     y = sid_df.merge(ydf, on="stay_id", how="left")["y_hk"].fillna(0).astype(int).values
 
     # 切 Train/Val/Test（by stay）
