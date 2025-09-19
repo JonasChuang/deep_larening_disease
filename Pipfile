@@ -15,6 +15,7 @@ scikit-learn = "*"
 joblib = "*"
 keras = "*"
 tensorflow = "*"
+shap = "*"
 
 [dev-packages]
 

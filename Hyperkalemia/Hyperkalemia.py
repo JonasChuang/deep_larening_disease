@@ -9,7 +9,7 @@ MIMIC-IV｜0–24h 每小時序列（排除 K）→ GRU → 預測 24–48h 高�
 輸出：./artifacts_hk_seq/ 下存模型與指標
 """
 from main import ENG
-import os, json, joblib, numpy as np, pandas as pd
+import os, json, joblib, numpy as np, pandas as pd, shap
 from typing import Dict, Tuple, List
 from sqlalchemy import create_engine, text
 from sklearn.preprocessing import StandardScaler
@@ -523,6 +523,68 @@ def plot_eval_metrics(res, tag="Validation"):#長條圖
 
     plt.show()
 
+
+def shap_show(model,Xtr,Xte,feat_cols):
+
+    bg_n = min(128, len(Xtr))
+    X_bg = Xtr[np.random.default_rng(42).choice(len(Xtr), size=bg_n, replace=False)]
+
+    # 取一批要解釋的樣本（這裡用測試集前 64 筆示範）
+    k = min(64, len(Xte))
+    X_explain = Xte[:k]
+
+    # 建立 explainer（新式 API 優先；不行就退回 DeepExplainer）
+    try:
+        explainer = shap.Explainer(model, X_bg)   # 需 shap 新版
+        expl = explainer(X_explain)               # shap.Explanation
+        sv = expl.values                          # (k, T, F)
+        base = expl.base_values                   # (k,) 或標量
+    except Exception as Error:
+        print(str(Error))
+        explainer = shap.DeepExplainer(model, X_bg)   # 舊版 API
+        sv_list = explainer.shap_values(X_explain)    # list/ndarray
+        sv = sv_list[0] if isinstance(sv_list, list) else sv_list  # (k, T, F)
+        base = getattr(explainer, "expected_value", 0.0)
+    print("SHAP values shape:", sv.shape) 
+
+    # 各特徵的平均 |SHAP|（跨樣本與時間）
+    imp_feat = np.mean(np.abs(sv), axis=(0,1))   # -> (F,)
+    rank = np.argsort(imp_feat)[::-1]
+    top = min(15, len(feat_cols))
+
+    plt.figure(figsize=(6, 0.35*top + 2))
+    plt.barh(range(top), imp_feat[rank[:top]][::-1])
+    plt.yticks(range(top), [feat_cols[i] for i in rank[:top]][::-1])
+    plt.xlabel("Mean |SHAP| (global importance)")
+    plt.title("Top features (aggregated over time)")
+    plt.tight_layout(); plt.savefig(os.path.join(OUTDIR, "shap_global_features.png"), dpi=150)
+    plt.close()
+
+    T = sv.shape[1]
+    imp_time = np.mean(np.abs(sv), axis=(0,2))   # -> (T,)
+
+    plt.figure(figsize=(7,3))
+    plt.plot(range(T), imp_time, marker="o")
+    plt.xlabel("Hour since ICU intime (t)")
+    plt.ylabel("Mean |SHAP|")
+    plt.title("When does the model care most?")
+    plt.tight_layout(); plt.savefig(os.path.join(OUTDIR, "shap_time_importance.png"), dpi=150)
+    plt.close()
+
+    case_idx = 0
+    M = sv[case_idx]   # (T, F) 這個病人的 SHAP 矩陣
+    vmin, vmax = -np.max(np.abs(M)), np.max(np.abs(M))
+
+    plt.figure(figsize=(9, 0.35*len(feat_cols) + 2))
+    plt.imshow(M.T, aspect="auto", origin="lower", vmin=vmin, vmax=vmax)
+    plt.colorbar(label="SHAP value (+ drives risk up)")
+    plt.yticks(range(len(feat_cols)), feat_cols)
+    plt.xlabel("Hour"); plt.ylabel("Feature")
+    plt.title(f"Case #{case_idx}: SHAP heatmap (time × feature)")
+    plt.tight_layout(); plt.savefig(os.path.join(OUTDIR, "shap_heatmap_case0.png"), dpi=150)
+    plt.close()
+
+
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
     print("==> 建 cohort/時窗、抓特徵事件")
@@ -575,13 +637,15 @@ def main():
 
     print("==> 評估")
     va_prob = model.predict(Xva, batch_size=256).ravel()
-    te_prob = model.predict(Xte, batch_size=256).ravel()
+    te_prob = model.predict(Xte, batch_size=256).ravel()# 模型預測
     val_metrics = eval_block(yva, va_prob, "VAL")
-    test_metrics= eval_block(yte, te_prob, "TEST")
+    test_metrics= eval_block(yte, te_prob, "TEST")# 真實標籤
     plot_eval_metrics(val_metrics, tag="VAL")
     plot_eval_metrics(test_metrics, tag="TEST")
 
     plot_eval_radar([val_metrics, test_metrics], ["VAL","TEST"])
+
+    #shap_show(model,Xtr,Xte,feat_cols)
 
     print("==> 輸出")
     mdir = OUTDIR
@@ -592,4 +656,18 @@ def main():
                    "k_cutoff": K_CUTOFF}, f, ensure_ascii=False, indent=2)
     np.save(os.path.join(mdir, "test_prob.npy"), te_prob)
     np.save(os.path.join(mdir, "test_y.npy"),   yte)
+    # te_prob:
+    # 測試集每個樣本的 預測機率 (通常是 sigmoid 輸出的值，介於 0~1)。
+    # 存成 test_prob.npy，方便後續做 ROC、PR、Calibration、SHAP 分析。
+
+    # yte:
+    # 測試集的 真實標籤 (ground truth)，通常是 0/1。
+    # 存成 test_y.npy，對應 te_prob，用來計算 AUC、AUPRC、F1 等評估指標。
+
     print("完成，Artifacts 於：", os.path.abspath(mdir))
+
+    
+
+
+
+
