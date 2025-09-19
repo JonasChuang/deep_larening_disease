@@ -1,0 +1,100 @@
+「高血鉀（Hyperkalemia）」是一個常見但危險的代謝異常。它會導致心律不整甚至猝死，因此在 ICU、腎臟科、急診 都是重點監測項目。下面我幫你整理 常見危險因子，分為幾大類：
+
+1. 腎臟相關因子
+
+慢性腎臟病（CKD, Chronic Kidney Disease）
+→ 腎臟排鉀功能下降，鉀離子容易累積。
+
+急性腎損傷（AKI, Acute Kidney Injury）
+→ 會造成暫時性的鉀排泄不足。
+
+腎臟替代治療不足
+→ 例如透析不完全或透析延遲。
+
+2. 藥物相關因子
+
+RAAS 抑制劑
+
+ACE inhibitors (ACEi)
+
+Angiotensin receptor blockers (ARB)
+
+Renin inhibitors
+
+鉀保持性利尿劑（K-sparing diuretics）
+
+Spironolactone、Eplerenone、Amiloride、Triamterene
+
+β-阻斷劑（Beta-blockers）
+
+抑制腎素分泌，減少鉀排泄
+
+免疫抑制劑
+
+Cyclosporine, Tacrolimus
+
+Heparin
+
+抑制醛固酮分泌
+
+NSAIDs
+
+減少腎血流量，影響鉀排泄
+
+鉀補充劑 / 輸血
+
+直接增加血鉀
+
+3. 內分泌與代謝異常
+
+低醛固酮症（Hypoaldosteronism）
+
+Addison’s disease, Type 4 RTA (renal tubular acidosis)
+
+糖尿病（特別是 DKA 酸中毒狀態）
+
+酸中毒會導致細胞外鉀濃度升高
+
+代謝性酸中毒
+
+氫離子進入細胞 → 鉀離子移出
+
+4. 組織崩解相關
+
+橫紋肌溶解（Rhabdomyolysis）
+
+損傷肌肉大量釋放鉀
+
+腫瘤溶解症候群（Tumor lysis syndrome, TLS）
+
+化療後細胞破壞，鉀大量釋放
+
+大面積燒傷、溶血
+
+細胞破壞導致鉀釋放
+
+5. 其他危險因子
+
+高齡：腎絲球過濾率下降
+
+脫水 / 腎灌流不足
+
+合併心衰竭、肝硬化（常合併使用 RAAS 抑制劑 + 利尿劑）
+
+6. MIMIC 資料庫應用
+
+在 MIMIC-IV 中做「高血鉀風險因子」分析，常見可用的變數：
+
+人口學資料：年齡、性別（patients）
+
+診斷碼：CKD、AKI、糖尿病、心衰竭（diagnoses_icd）
+
+實驗室：Creatinine、BUN、HCO₃⁻、pH、Glucose、乳酸（labevents）
+
+用藥：ACEi/ARB、Spironolactone、KCl、Heparin、Cyclosporine（prescriptions）
+
+輸入輸出：尿量（outputevents）、輸血紀錄（inputevents）
+
+✅ 總結
+高血鉀危險因子主要來自 腎功能不良、藥物、酸中毒、細胞破壞 等。
+在 MIMIC 資料庫裡可以結合 實驗室數據 + 診斷 + 藥物 + 輸出入量 來建模，做 高血鉀風險預測。

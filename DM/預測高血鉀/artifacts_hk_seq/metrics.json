@@ -1,0 +1,36 @@
+{
+  "val": {
+    "threshold": 0.7131128311157227,
+    "AUC": 0.8010144927536231,
+    "AUPRC": 0.27325829276318025,
+    "F1": 0.36,
+    "Brier": 0.208877963602423
+  },
+  "test": {
+    "threshold": 0.560734212398529,
+    "AUC": 0.6911000944287062,
+    "AUPRC": 0.1249694821811768,
+    "F1": 0.21138211382113822,
+    "Brier": 0.22677895226983885
+  },
+  "features": [
+    "bicarb",
+    "bun",
+    "chloride",
+    "creatinine",
+    "dbp",
+    "glucose",
+    "hr",
+    "rr",
+    "sbp",
+    "sodium",
+    "temp",
+    "urine"
+  ],
+  "seq_hours": 24,
+  "label_window": [
+    24,
+    48
+  ],
+  "k_cutoff": 5.5
+}
