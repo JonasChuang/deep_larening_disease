@@ -30,6 +30,29 @@ K_CUTOFF  = float(os.getenv("K_CUTOFF", "5.5"))   # 高血鉀閾值
 RANDOM_STATE = int(os.getenv("RANDOM_STATE", "42"))
 TEST_SIZE = float(os.getenv("TEST_SIZE", "0.2"))
 VAL_SIZE  = float(os.getenv("VAL_SIZE",  "0.2"))
+#TEST_SIZE 和 VAL_SIZE 決定了 資料集的切分比例（訓練 / 驗證 / 測試）。建議數值要看總樣本數量 和 研究目的
+# 一般經驗法則
+#標準比例:
+# Train 60% / Val 20% / Test 20%
+# 常見於中等規模數據
+# 訓練有足夠數據，驗證集能調參，測試集獨立檢驗泛化
+# 大數據情境（>10萬筆樣本）:
+# Train 80% / Val 10% / Test 10%
+# 訓練資料足夠 → 測試/驗證不需太大
+# 節省運算資源，加快實驗
+# 小數據情境（幾千筆甚至更少）:
+# Train 70% / Val 15% / Test 15%
+# 減少測試集比例，避免浪費太多資料
+# 有時甚至用 交叉驗證 (cross-validation) 取代固定 val/test
+
+# 醫療研究常見考量
+# Test（外部驗證）要保護好：通常 15–20% 的資料會單獨保留，不能用來調參。
+# Val（模型調參用）：10–20% 是常見範圍。
+# Train：剩下的全部
+
+
+
+
 QUICK_TEST = os.getenv("QUICK_TEST", "false").lower() == "true"
 
 np.random.seed(RANDOM_STATE)
@@ -330,7 +353,7 @@ def build_tensor2(char_h: pd.DataFrame, lab_h: pd.DataFrame, ur_h: pd.DataFrame,
 
 def focal_loss(gamma=2., alpha=0.25):
     """
-    意思是把 損失函數 換成 Focal Loss，並設定兩個超參數：gamma=2.0、alpha=0.25
+    意思是把損失函數 換成 Focal Loss，並設定兩個超參數：gamma=2.0、alpha=0.25
     「讓模型忽略容易的樣本，把注意力放在少數、困難的正樣本」，在不平衡資料（像 CKD 死亡、敗血症、低鈉）特別有效
 
     1. Focal Loss 的背景
@@ -341,14 +364,9 @@ def focal_loss(gamma=2., alpha=0.25):
 
     FL(pt)=−α(1−pt)γ log(pt)
     
-
     實際效果:
 
-    在醫療數據上，使用 focal loss 常會：
-
-    AUC 提升一點點或差不多；
-
-    AUPRC 提升顯著（因為更關注正樣本）；
+    在醫療數據上，使用 focal loss 常會，AUC 提升一點點或差不多；AUPRC 提升顯著（因為更關注正樣本）；
 
     收斂速度比 BCE 慢，但泛化到 test set 更穩。
 
@@ -365,8 +383,6 @@ def focal_loss(gamma=2., alpha=0.25):
     會加強「難分的正樣本」的影響。
 
     適合醫療預測（罕見事件）。
-
-
     
     """
     def loss(y_true, y_pred):
@@ -491,23 +507,13 @@ def plot_eval_metrics(res, tag="Validation"):#長條圖
 
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
-    print("==> 建 cohort/時窗")
+    print("==> 建 cohort/時窗、抓特徵事件")
     #data=make_cohort()
     
     df_char=pd.read_csv("Hyperkalemia/CSV/fetch_chartevents.csv")
     df_lab = pd.read_csv("Hyperkalemia/CSV/fetch_labevents.csv")
     df_ur = pd.read_csv("Hyperkalemia/CSV/URINE.csv")
     stays = pd.read_csv("Hyperkalemia/CSV/icu_adm_view.csv")
-
-    # if QUICK_TEST and len(stays) > 300:
-    #     stays = stays.sample(300, random_state=RANDOM_STATE).reset_index(drop=True)
-    #     # 重新放入（非臨時表，僅為demo）
-    #     stays.to_sql("icu_adm_view", ENG, if_exists="replace", index=False)
-
-    print("==> 抓特徵事件")
-    # df_char = fetch_chartevents()
-    # df_lab  = fetch_labevents()
-    # df_ur   = fetch_urine()
 
     print("==> 轉每小時網格（0–24h）")
     char_h = to_hourly(df_char, stays)
