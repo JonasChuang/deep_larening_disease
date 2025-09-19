@@ -91,6 +91,45 @@ def run_df(sql: str, params: Dict=None) -> pd.DataFrame:
 def make_cohort():
     # 以 ICU 入室為對齊（若改成入院，請把 icustays 改 admissions，t0=admittime）
     # intime 入ICU 時間
+
+    SQL=""" --大母體SQL
+        select
+            `i`.`subject_id` as `subject_id`,
+            `i`.`hadm_id` as `hadm_id`,
+            `i`.`stay_id` as `stay_id`,
+            `i`.`intime` as `t0`,
+            (`i`.`intime` + interval 24 hour) as `t_end`,
+            (`i`.`intime` + interval 24 hour) as `lbl_from`,
+            (`i`.`intime` + interval 48 hour) as `lbl_to`
+        from
+            (`icustays` `i`
+        join `patients` on
+            ((`patients`.`subject_id` = `i`.`subject_id`)))
+        where
+            (`i`.`subject_id` in (
+            select
+                `p`.`subject_id`
+            from
+                `patients` `p`
+            where
+                (`p`.`anchor_year_group` in ('2020 - 2022', '2014 - 2016')
+                and ((p.anchor_age + YEAR(i.intime) - p.anchor_year) >= 18)
+                ))
+                
+                and exists(
+                select
+                    1
+                from
+                    `diagnoses_icd` `icd`
+                where
+                    ((`icd`.`hadm_id` = `i`.`hadm_id`)
+                        and (`icd`.`subject_id` = `i`.`subject_id`)
+                            and (((`icd`.`icd_version` = 10)
+                                and (replace(`icd`.`icd_code`, '.', '') like 'N18%'))
+                                or ((`icd`.`icd_version` = 9)
+                                    and (replace(`icd`.`icd_code`, '.', '') like '585%'))))));
+
+    """
     
     #大母體
     stays = pd.read_sql_query(text("SELECT * FROM icu_adm_view"), ENG)
