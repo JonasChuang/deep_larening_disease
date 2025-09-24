@@ -589,6 +589,54 @@ def shap_show(model,Xtr,Xte,feat_cols):
     plt.tight_layout(); plt.savefig(os.path.join(OUTDIR, "shap_heatmap_case0.png"), dpi=150)
     plt.close()
 
+def bootstrap_ci(y, p, n_bootstrap=1000, ci=95):
+    rng = np.random.RandomState(42)
+    stats = {"AUC": [], "AUPRC": [], "F1": [], "Brier": []}
+
+    for _ in range(n_bootstrap):
+        # 重抽樣
+        idx = rng.randint(0, len(y), len(y))
+        y_b, p_b = y[idx], p[idx]
+
+        # 預測
+        thr = 0.5  # 這裡可以換成 best_pr_thr(y, p)，看你要固定還是最佳閾值
+        yhat_b = (p_b >= thr).astype(int)
+
+        # 計算指標
+        stats["AUC"].append(roc_auc_score(y_b, p_b))
+        stats["AUPRC"].append(average_precision_score(y_b, p_b))
+        stats["F1"].append(f1_score(y_b, yhat_b))
+        stats["Brier"].append(brier_score_loss(y_b, p_b))
+
+    # 取平均與信賴區間
+    results = {}
+    alpha = (100 - ci) / 2
+    for k, v in stats.items():
+        low, high = np.percentile(v, [alpha, 100 - alpha])
+        results[k] = {
+            "mean": np.mean(v),
+            f"low_{ci}%": low,
+            f"high_{ci}%": high
+        }
+    return pd.DataFrame(results).T
+
+def bootstrap_PLT(yte,te_prob):
+    ci_table = bootstrap_ci(yte, te_prob, n_bootstrap=1000, ci=95)
+
+    # 輸出表格
+    print(ci_table)
+
+    # 畫圖 (箱型圖展示分佈)
+    plt.figure(figsize=(8,5))
+    plt.boxplot([ci_table.loc["AUC"].values,
+                ci_table.loc["AUPRC"].values,
+                ci_table.loc["F1"].values,
+                ci_table.loc["Brier"].values],
+                labels=["AUC","AUPRC","F1","Brier"])
+    plt.title("Bootstrap Distribution of Metrics (95% CI)")
+    plt.grid(True, linestyle="--", alpha=0.6)
+    plt.show()
+
 
 def main():
     os.makedirs(OUTDIR, exist_ok=True)
@@ -609,8 +657,8 @@ def main():
 
     print("==> 取標籤（24–48h 高血鉀）")
  
-    #ydf = pd.read_csv("Hyperkalemia/CSV/POTASSIUM.csv")#高血鉀
-    ydf = pd.read_csv("Hyperkalemia/CSV/low_sodium.csv")#低鈉
+    ydf = pd.read_csv("Hyperkalemia/CSV/POTASSIUM.csv")#高血鉀
+    #ydf = pd.read_csv("Hyperkalemia/CSV/low_sodium.csv")#低鈉
     y = sid_df.merge(ydf, on="stay_id", how="left")["y_hk"].fillna(0).astype(int).values
 
     # 切 Train/Val/Test（by stay）
@@ -652,8 +700,9 @@ def main():
     plot_eval_metrics(test_metrics, tag="TEST")#測試集
 
     plot_eval_radar([val_metrics, test_metrics], ["VAL","TEST"])
+    bootstrap_PLT(yte,te_prob)
 
-    #shap_show(model,Xtr,Xte,feat_cols)
+    #shap_show(model,Xtr,Xte,feat_cols)#不能用
 
     print("==> 輸出")
     mdir = OUTDIR
