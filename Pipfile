@@ -16,6 +16,7 @@ joblib = "*"
 keras = "*"
 tensorflow = "*"
 shap = "*"
+yolo = "*"
 
 [dev-packages]
 
