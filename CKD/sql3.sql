@@ -56,36 +56,163 @@ or diagnoses_icd.icd_code LIKE 'I21%'or diagnoses_icd.icd_code LIKE 'I22%'  -- A
 
 )
 
---檢驗
+--檢驗平均值
 
-select * from mimic3_1.d_labitems dl 
-where itemid in(
-'50912','51006','50971','50983','50902','50882','50868','51221','51265'
-)
 
---CKD 病人的檢驗
+
+
 select
-charttime ,storetime , d_labitems.label ,value ,valuenum ,valueuom ,ref_range_lower ,ref_range_upper,flag,comments
--- a. 
-from mimic3_1.labevents a
+    a.itemid,
+    a.lab_name                          AS 實驗室項目,
+    a.fluid,
+    a.category,
+    COUNT(a.lab_name  ) as 筆數 ,
+     round(MIN(a.valuenum)  ,2)                     AS 最小值,
+     round( MAX(a.valuenum) ,2)                        AS 最大值,
+    round( AVG(a.valuenum),2)                     AS 平均值,
+    
+   
+     (    SELECT 
+   round(AVG(valuenum),2) AS median_value
+FROM (
+  SELECT 
+    valuenum,
+    ROW_NUMBER() OVER (ORDER BY valuenum) AS row_num,
+    COUNT(*) OVER () AS total_rows
+  FROM z_ckd_lab where itemid=a.itemid
+) AS ordered
+WHERE row_num IN (FLOOR((total_rows + 1) / 2), CEIL((total_rows + 1) / 2))) as 中位數,
+      round(STDDEV(a.valuenum) ,2)                  AS 標準差
+FROM
+    z_ckd_lab a
+    GROUP by a.lab_name ,a.itemid,a.fluid,a.category
+    -- order by a.lab_name asc
+    UNION
+    select  '' as itemid ,
+    'EGFR(入院)'                          AS 實驗室項目,
+    '' as fluid,
+    '' as category,
+    COUNT(a.admit_egfr  ) as 筆數 ,
+    MIN(a.admit_egfr)                     AS 最小值,
+    MAX(a.admit_egfr)                     AS 最大值,
+    round( AVG(a.admit_egfr),2)                     AS 平均值,
+    
+  
+          (    SELECT 
+  AVG(admit_egfr) AS median_value
+FROM (
+  SELECT 
+    admit_egfr,
+    ROW_NUMBER() OVER (ORDER BY admit_egfr) AS row_num,
+    COUNT(*) OVER () AS total_rows
+  FROM z_ckd_adm where z_ckd_adm.admit_egfr is not null
+) AS ordered
+WHERE row_num IN (FLOOR((total_rows + 1) / 2), CEIL((total_rows + 1) / 2))) as 中位數,
+        round(STDDEV(a.admit_egfr) ,2)                  AS 標準差
+    from z_ckd_adm a
+    where a.admit_egfr is not null
+  UNION
+    select  '' as itemid ,
+    'EGFR(最新)'                          AS 實驗室項目,
+    '' as fluid,
+    '' as category,
+    COUNT(a.EGFR  ) as 筆數 ,
+    MIN(a.EGFR)                     AS 最小值,
+    MAX(a.EGFR)                     AS 最大值,
+    round( AVG(a.EGFR),2)                     AS 平均值,
+    
+  
+          (    SELECT 
+  AVG(EGFR) AS median_value
+FROM (
+  SELECT 
+    EGFR,
+    ROW_NUMBER() OVER (ORDER BY EGFR) AS row_num,
+    COUNT(*) OVER () AS total_rows
+  FROM z_ckd_adm where z_ckd_adm.EGFR is not null
+) AS ordered
+WHERE row_num IN (FLOOR((total_rows + 1) / 2), CEIL((total_rows + 1) / 2))) as 中位數,
+        round(STDDEV(a.EGFR) ,2)                  AS 標準差
+    from z_ckd_adm a
+    where a.EGFR is not null
+    UNION
+    select  '' as itemid ,
+    'age_years'                          AS 實驗室項目,
+    '' as fluid,
+    '' as category,
+    COUNT(a.age_years  ) as 筆數 ,
+    MIN(a.age_years)                     AS 最小值,
+    MAX(a.age_years)                     AS 最大值,
+    round( AVG(a.age_years),2)                     AS 平均值,
+    
+  
+          (    SELECT 
+  AVG(age_years) AS median_value
+FROM (
+  SELECT 
+    age_years,
+    ROW_NUMBER() OVER (ORDER BY age_years) AS row_num,
+    COUNT(*) OVER () AS total_rows
+  FROM z_ckd_adm where z_ckd_adm.age_years is not null
+) AS ordered
+WHERE row_num IN (FLOOR((total_rows + 1) / 2), CEIL((total_rows + 1) / 2))) as 中位數,
+        round(STDDEV(a.age_years) ,2)                  AS 標準差
+    from z_ckd_adm a
+    where a.age_years is not null
+    UNION
+     select  '' as itemid ,
+    'bmi'                          AS 實驗室項目,
+    '' as fluid,
+    '' as category,
+    COUNT(a.bmi  ) as 筆數 ,
+    MIN(a.bmi)                     AS 最小值,
+    MAX(a.bmi)                     AS 最大值,
+    round( AVG(a.bmi),2)                     AS 平均值,
+    
+  
+          (    SELECT 
+   round(AVG(bmi),2) AS median_value
+FROM (
+  SELECT 
+    bmi,
+    ROW_NUMBER() OVER (ORDER BY bmi) AS row_num,
+    COUNT(*) OVER () AS total_rows
+  FROM z_ckd_adm where z_ckd_adm.bmi is not null
+) AS ordered
+WHERE row_num IN (FLOOR((total_rows + 1) / 2), CEIL((total_rows + 1) / 2))) as 中位數,
+        round(STDDEV(a.bmi) ,2)                  AS 標準差
+    from z_ckd_adm a
+    where a.bmi is not null
+    
+    
 
-join ckd_admissions ca USING(subject_id, hadm_id  )
-inner  join mimic3_1.d_labitems on( d_labitems.itemid =a.itemid )
-where a.itemid in(
-'50912','51006','50971','50983','50902','50882','50868','51221','51265'
-)
-and exists(
-select * from ckd_adm_view where ckd_adm_view.subject_id =a.subject_id and ckd_adm_view.hadm_id =a.hadm_id
+    
+    
 
-)
---心跳
+-- 48 小時內上升 ≥0.3 mg/dL 的配對（s0 → s1）
+SELECT
+  lab1.subject_id,
+  lab1.hadm_id,
+  lab1.charttime as lab1_rpttime,
+  
+ lab1.valuenum AS lab1_rpt,
+ lab2.charttime as lab2_rpttime,
+  
+ lab2.valuenum AS lab2_rpt
+ 
+FROM z_ckd_lab lab1
+JOIN z_ckd_lab lab2 ON lab2.hadm_id   = lab1.hadm_id
+   
+   AND lab2.charttime > lab1.charttime
+   AND lab2.charttime <= lab1.charttime + INTERVAL 48 HOUR
+   AND (lab2.valuenum - lab1.valuenum) >= 0.3
+   AND lab1.valuenum BETWEEN 0.1 AND 20    -- 合理值防呆（可調）
+   AND lab2.valuenum BETWEEN 0.1 AND 20
 
-where chartevents.itemid in(
+-- 高血鉀
+SELECT 
+hadm_id
+,case when max( valuenum) >5.5 then 1 else 0 end as y_hk
 
-select d_items.itemid from d_items WHERE UPPER(label) = 'HEART RATE'
-)
- AND chartevents.valuenum IS NOT null
-LIMIT 100;
-
-
-
+FROM z_ckd_lab zcl where itemid in('50971','52610','50822','52452')
+group by hadm_id

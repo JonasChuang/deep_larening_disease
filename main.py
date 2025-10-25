@@ -2,8 +2,10 @@
 
 import os
 from sqlalchemy import create_engine
-from Hyperkalemia import Hyperkalemia  #高血鉀 預測
-
+from Hyperkalemia import Hyperkalemia,shap_view  #高血鉀 預測
+from features import boruta_feature_selection,rfecv_feature_selection,xgb_feature_importance
+import numpy as np
+#from CKD import ETL
 # ======== 使用者設定（可用環境變數覆寫） ========
 USER = os.getenv("MIMIC_MYSQL_USER", "user")
 PWD  = os.getenv("MIMIC_MYSQL_PWD",  "password")
@@ -14,8 +16,21 @@ OUTDIR = os.getenv("OUTDIR", "./artifacts_hk_seq")
 
 ENG = create_engine("mysql+pymysql://test:test@10.2.163.201:3306/mimic3_1")# 連接設定
 if __name__ == "__main__":
+    # y = np.load("./artifacts_hk_seq/test_y.npy")
+    # p = np.load("./artifacts_hk_seq/test_prob.npy")
+    # print("prevalence =", y.mean())
+
+    #ETL.CKD_LAB()
+    #D:\\project\\deep_larening_disease\\Hyperkalemia\\CSV\\adm_potassium_view\\fetch_labevents.csv
+    #D:\\project\\deep_larening_disease\\Hyperkalemia\\CSV\\icu_adm_view\\fetch_labevents.csv
+    #boruta_feature_selection("D:\\project\\deep_larening_disease\\Hyperkalemia\\CSV\\icu_adm_view\\fetch_labevents.csv","POTASSIUM")
+    #rfecv_feature_selection("D:\\project\\deep_larening_disease\\Hyperkalemia\\CSV\\icu_adm_view\\fetch_labevents.csv","POTASSIUM")
+    #xgb_feature_importance("D:\\project\\deep_larening_disease\\Hyperkalemia\\CSV\\icu_adm_view\\fetch_labevents.csv","POTASSIUM")
     #shap_view.main()
-    Hyperkalemia.main()
+    #Hyperkalemia.make_cohort()
+    #Hyperkalemia.main("icu_adm_view")
+    Hyperkalemia.main("POTA_20251019")#POTA_20251016、SODIUM_20251016
+    #Hyperkalemia.main("adm_low_sodim_view")
     print("OK")
 
 # 訓練深度學習模型（例如用 MIMIC ICU 病人做 CKD / 低鈉 / 敗血症預測）分成三個集合：

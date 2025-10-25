@@ -17,6 +17,9 @@ keras = "*"
 tensorflow = "*"
 shap = "*"
 yolo = "*"
+xgboost = "*"
+boruta = "*"
+statsmodels = "*"
 
 [dev-packages]
 
