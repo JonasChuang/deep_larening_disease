@@ -493,6 +493,126 @@ def build_tensor2(char_h: pd.DataFrame, lab_h: pd.DataFrame, ur_h: pd.DataFrame,
 
     return X, feat_cols, pd.DataFrame({"stay_id": order})
 
+#build_tensor3:偏態補值
+def build_tensor3(char_h: pd.DataFrame, lab_h: pd.DataFrame, ur_h: pd.DataFrame, stays: pd.DataFrame) -> Tuple[np.ndarray, List[str], pd.DataFrame]:
+    """
+    將 long format（char/lab/output 每筆事件一列）轉為三維張量 (N × T × F)
+    並處理：label→feature 映射、時間網格補齊、缺值處理、標準化。
+    """
+
+    # 1) 合併來源
+    frames = [x for x in [char_h, lab_h, ur_h] if x is not None and not x.empty]
+    if not frames:
+        raise RuntimeError("No hourly features extracted.")
+    long = pd.concat(frames, ignore_index=True)
+
+    # 2) 安全數值轉換（避免 '103'、'nan'、'' 汙染）
+    long["value"] = pd.to_numeric(long["value"], errors="coerce")
+
+    # 3) label → 統一的 feature 名稱；丟掉 map 不到的
+    long["feature"] = long["label"].map(FEATURE_MAP)
+    long = long.dropna(subset=["feature"])
+
+    # 4) 長轉寬（同一小時多筆取最後一筆）
+    wide = (
+        long
+        .pivot_table(
+            index=["stay_id", "time_index"],
+            columns="feature",
+            values="value",
+            aggfunc="last"
+        )
+        .reset_index()
+    )
+
+    # 5) 補滿 0..SEQ_HOURS-1 的時間格
+    grid = (
+        stays[["stay_id"]].drop_duplicates().assign(key=1)
+        .merge(
+            pd.DataFrame({"time_index": np.arange(SEQ_HOURS), "key": 1}),
+            on="key"
+        )
+        .drop("key", axis=1)
+    )
+    wide = (
+        grid.merge(wide, on=["stay_id", "time_index"], how="left")
+            .sort_values(["stay_id", "time_index"])
+    )
+
+    # 6) 缺值處理：先 per-stay 前向填補，再做「偏態補值」
+    feat_cols = [c for c in wide.columns if c not in ["stay_id", "time_index"]]
+
+    # 保險：把可能殘留的字串數字轉成 float
+    wide[feat_cols] = wide[feat_cols].apply(pd.to_numeric, errors="coerce")
+
+    def _ff(g):  # LOCF（向前補值）
+        g[feat_cols] = g[feat_cols].ffill()
+        return g
+
+    wide = wide.groupby("stay_id", as_index=False).apply(_ff).reset_index(drop=True)
+
+    # 刪除「整欄都是 NaN」的特徵（避免後面計算出問題）
+    all_nan_cols = [c for c in feat_cols if wide[c].isna().all()]
+    if all_nan_cols:
+        wide = wide.drop(columns=all_nan_cols)
+        feat_cols = [c for c in feat_cols if c not in all_nan_cols]
+
+    # ===== 這裡改成「偏態補值」 =====
+    # 依每個 feature 的偏態（skewness）決定要用 mean / 不同分位數 來補值
+    #   abs(skew) <= 0.5   → 接近常態，用平均數補
+    #   skew >  0.5        → 右偏，保守起見用較低分位數（例如 Q0.3）
+    #   skew < -0.5        → 左偏，用較高分位數（例如 Q0.7）
+    # 如果算不到 skew，就退回用 median
+    skews = wide[feat_cols].skew(numeric_only=True)
+
+    impute_vals = {}
+    for col in feat_cols:
+        col_data = wide[col]
+        s = skews.get(col, np.nan)
+
+        if col_data.notna().sum() == 0:
+            # 理論上不會到這裡，因為 all-NaN 已經被丟掉
+            impute_vals[col] = np.nan
+            continue
+
+        if np.isnan(s):
+            # 無法計算偏態 → 用 median 當預設
+            impute_vals[col] = col_data.median()
+        elif s > 0.5:
+            # 明顯右偏：多高值 outlier，往較低分位數取值
+            impute_vals[col] = col_data.quantile(0.3)
+        elif s < -0.5:
+            # 明顯左偏：多低值 outlier，往較高分位數取值
+            impute_vals[col] = col_data.quantile(0.7)
+        else:
+            # 偏態不明顯：用平均數補
+            impute_vals[col] = col_data.mean()
+
+    wide[feat_cols] = wide[feat_cols].fillna(impute_vals)
+    # ===== 偏態補值結束 =====
+
+    # 7) 標準化（先轉 float32，再 scale）
+    from sklearn.preprocessing import StandardScaler
+    wide[feat_cols] = wide[feat_cols].astype("float32")
+    scaler = StandardScaler()
+    wide[feat_cols] = scaler.fit_transform(wide[feat_cols])
+    joblib.dump(scaler, os.path.join(OUTDIR, "scaler.joblib"))
+
+    # 8) 組 N×T×F 張量
+    order = wide[["stay_id"]].drop_duplicates().values.ravel()
+    N, T, F = len(order), SEQ_HOURS, len(feat_cols)
+    X = np.zeros((N, T, F), dtype=np.float32)
+
+    for i, sid in enumerate(order):
+        blk = (
+            wide[wide["stay_id"] == sid]
+            .sort_values("time_index")[feat_cols]
+            .values
+        )
+        X[i, :, :] = blk[:T]
+
+    return X, feat_cols, pd.DataFrame({"stay_id": order})
+
 def focal_loss(gamma=2., alpha=0.25):
     """
     意思是把損失函數 換成 Focal Loss，並設定兩個超參數：gamma=2.0、alpha=0.25
@@ -777,30 +897,30 @@ def main(flg):
     os.makedirs(OUTDIR, exist_ok=True)
     print("==> 建 cohort/時窗、抓特徵事件")
     #data=make_cohort()
-    df_char=pd.read_csv(f"Hyperkalemia/CSV/{flg}/fetch_chartevents.csv")
-    df_lab = pd.read_csv(f"Hyperkalemia/CSV/{flg}/fetch_labevents.csv")
-    df_ur = pd.read_csv(f"Hyperkalemia/CSV/{flg}/URINE.csv")
+    df_char=pd.read_csv(f"D:/project/研究/CSV/{flg}/fetch_chartevents.csv")
+    df_lab = pd.read_csv(f"D:/project/研究/CSV/{flg}/fetch_labevents.csv")
+    df_ur = pd.read_csv(f"D:/project/研究/CSV/{flg}/URINE.csv")
     #stays = pd.read_csv(f"Hyperkalemia/CSV/{flg}.csv")
     if flg=="adm_potassium_view":
         df_lab= df_lab[df_lab['label'] != 'POTASSIUM']# 訓練排除 高血鉀
-        ydf = pd.read_csv(f"Hyperkalemia/CSV/{flg}/POTASSIUM.csv")#高血鉀
-        stays = pd.read_csv(f"Hyperkalemia/CSV/{flg}.csv")
+        ydf = pd.read_csv(f"D:/project/研究/CSV/{flg}/POTASSIUM.csv")#高血鉀
+        stays = pd.read_csv(f"D:/project/研究/CSV/{flg}.csv")
     if flg=="adm_low_sodim_view":
         df_lab= df_lab[df_lab['label'] != 'SODIUM']# 訓練排除 低鈉
-        ydf = pd.read_csv(f"Hyperkalemia/CSV/{flg}/low_sodium.csv")#低鈉
-        stays = pd.read_csv(f"Hyperkalemia/CSV/{flg}.csv")
+        ydf = pd.read_csv(f"D:/project/研究/CSV/{flg}/low_sodium.csv")#低鈉
+        stays = pd.read_csv(f"D:/project/研究/CSV/{flg}.csv")
     if flg=="icu_adm_view":
         #df_lab= df_lab[df_lab['label'] != 'SODIUM']
-        ydf = pd.read_csv(f"Hyperkalemia/CSV/{flg}/icu_adm_view.csv")#要預測的結果
-        stays = pd.read_csv(f"Hyperkalemia/CSV/{flg}/icu_adm_view.csv")
+        ydf = pd.read_csv(f"D:/project/研究/CSV/{flg}/icu_adm_view.csv")#要預測的結果
+        stays = pd.read_csv(f"D:/project/研究/CSV/{flg}/icu_adm_view.csv")
         
     if flg=="POTA_20251019":
         #df_lab= df_lab[df_lab['label'] != 'POTASSIUM']
         #df_lab= df_lab[df_lab['label'] != 'Potassium, Whole Blood']
         df_lab = df_lab[~df_lab['label'].isin(['POTASSIUM', 'Potassium, Whole Blood','Potassium'])]
         #select hadm_id ,admittime ,dischtime ,aki,potassium ,low_sodium  from z_ckd_adm zca 
-        ydf = pd.read_csv(f"Hyperkalemia/CSV/{flg}/POTASSIUM.csv")#要預測的結果
-        stays = pd.read_csv(f"Hyperkalemia/CSV/{flg}/adm.csv")#stays 是模型的「全部樣本」
+        ydf = pd.read_csv(f"D:/project/研究/CSV/{flg}/POTASSIUM.csv")#要預測的結果
+        stays = pd.read_csv(f"D:/project/研究/CSV/{flg}/adm.csv")#stays 是模型的「全部樣本」
     if flg=="SODIUM_20251016":
         #df_lab= df_lab[df_lab['label'] != 'POTASSIUM']
         #df_lab= df_lab[df_lab['label'] != 'Potassium, Whole Blood']
@@ -814,7 +934,7 @@ def main(flg):
     lab_h  = to_hourly(df_lab,  stays)
     ur_h   = to_hourly(df_ur,   stays)
 
-    X, feat_cols, sid_df = build_tensor2(char_h, lab_h, ur_h, stays)
+    X, feat_cols, sid_df = build_tensor3(char_h, lab_h, ur_h, stays)
 
     print("==> 取標籤（24–48h 高血鉀）")
  
