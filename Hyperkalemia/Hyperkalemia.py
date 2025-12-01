@@ -77,12 +77,46 @@ LAB_LABELS = [  # 排除 POTASSIUM，避免洩漏
     , 'GLUCOSE'
 ]
 FEATURE_MAP = {
-    'HEART RATE':'hr','RESPIRATORY RATE':'rr','SPO2':'spo2','TEMPERATURE CELSIUS':'temp',
-    'NON INVASIVE BLOOD PRESSURE SYSTOLIC':'sbp','NON INVASIVE BLOOD PRESSURE DIASTOLIC':'dbp',
+    # 生命徵象 (Vitals)
+    'HEART RATE':'hr',
+    'RESPIRATORY RATE':'rr',
+    'SPO2':'spo2',
+    'TEMPERATURE CELSIUS':'temp',
+    'NON INVASIVE BLOOD PRESSURE SYSTOLIC':'sbp',
+    'NON INVASIVE BLOOD PRESSURE DIASTOLIC':'dbp',
     'MEAN ARTERIAL PRESSURE (NIBP)':'map',
-    'SODIUM':'sodium','BICARBONATE':'bicarb','CHLORIDE':'chloride',
-    'CREATININE':'creatinine','UREA NITROGEN':'bun','GLUCOSE':'glucose',
-    'URINE_OUTPUT':'urine'
+    
+    # 基本檢驗 (Basic Labs)
+    'SODIUM':'sodium',
+    'BICARBONATE':'bicarb',
+    'CHLORIDE':'chloride',
+    'CREATININE':'creatinine',
+    'UREA NITROGEN':'bun',
+    'GLUCOSE':'glucose',
+    
+    # 額外檢驗 (Additional Labs) - 從 SQL 查詢中補充
+    'ALBUMIN':'albumin',                    # 白蛋白
+    'HEMOGLOBIN':'hemoglobin',              # 血色素
+    'FREE CALCIUM':'calcium',               # 游離鈣
+    'PHOSPHATE':'phosphate',                # 血磷
+    'URIC ACID':'uric_acid',                # 尿酸
+    'CHOLESTEROL, TOTAL':'cholesterol',     # 總膽固醇
+    'TRIGLYCERIDES':'triglycerides',        # 三酸甘油脂
+    'CHOLESTEROL, LDL, CALCULATED':'ldl',   # 低密度膽固醇
+    '% HEMOGLOBIN A1C':'hba1c',             # 糖化血色素
+    'PROTEIN, URINE':'protein_urine',       # 蛋白尿
+    'ESTIMATED GFR (MDRD EQUATION)':'egfr', # 腎絲球過濾率
+    
+    # 尿量 (Urine Output)
+    'URINE_OUTPUT':'urine',
+    #藥物
+    'RAASi': 'drug_raasi',
+    'K_SPARING': 'drug_k_sparing',
+    'NSAID': 'drug_nsaid',
+    'HEPARIN': 'drug_heparin',
+    'LOOP': 'drug_loop',
+    'THIAZIDE': 'drug_thiazide'
+    
 }
 
 def run_df(sql: str, params: Dict=None) -> pd.DataFrame:
@@ -93,253 +127,6 @@ def run_df(sql: str, params: Dict=None) -> pd.DataFrame:
         print(str(ERROR))
         print(sql)
 
-def make_cohort():
-    # 以 ICU 入室為對齊（若改成入院，請把 icustays 改 admissions，t0=admittime）
-    # intime 入ICU 時間
-
-    map=[
-        #"adm_potassium_view",
-        # "adm_low_sodim_view",
-         'icu_adm_view'
-         ]
-
-    SQL=""" --大母體SQL
-        select
-            `i`.`subject_id` as `subject_id`,
-            `i`.`hadm_id` as `hadm_id`,
-            `i`.`stay_id` as `stay_id`,
-            `i`.`intime` as `t0`,
-            (`i`.`intime` + interval 24 hour) as `t_end`,
-            (`i`.`intime` + interval 24 hour) as `lbl_from`,
-            (`i`.`intime` + interval 48 hour) as `lbl_to`
-        from
-            (`icustays` `i`
-        join `patients` on
-            ((`patients`.`subject_id` = `i`.`subject_id`)))
-        where
-            (`i`.`subject_id` in (
-            select
-                `p`.`subject_id`
-            from
-                `patients` `p`
-            where
-                (`p`.`anchor_year_group` in ('2020 - 2022', '2014 - 2016')
-                and ((p.anchor_age + YEAR(i.intime) - p.anchor_year) >= 18)
-                ))
-                
-                and exists(
-                select
-                    1
-                from
-                    `diagnoses_icd` `icd`
-                where
-                    ((`icd`.`hadm_id` = `i`.`hadm_id`)
-                        and (`icd`.`subject_id` = `i`.`subject_id`)
-                            and (((`icd`.`icd_version` = 10)
-                                and (replace(`icd`.`icd_code`, '.', '') like 'N18%'))
-                                or ((`icd`.`icd_version` = 9)
-                                    and (replace(`icd`.`icd_code`, '.', '') like '585%'))))));
-
-    """
-    
-    #大母體
-    for adm_table in map:
-        stays = pd.read_sql_query(text(f"SELECT * FROM {adm_table}"), ENG)
-        stays.to_csv(f"Hyperkalemia/CSV/{adm_table}/icu_adm_view.csv", index=False, encoding="utf-8-sig")
-
-
-    
-        SQL = f"""
-        SELECT ce.stay_id, ce.charttime, UPPER(di.label) AS label, ce.valuenum
-        FROM chartevents ce
-        JOIN d_items di ON di.itemid = ce.itemid
-        JOIN {adm_table} s ON s.stay_id = ce.stay_id and s.AKI ='1'
-        WHERE ce.charttime >= s.t0 AND ce.charttime < s.t_end
-        AND ce.itemid IN ('220045','220179','220180','220210','223762')
-        AND ce.valuenum IS NOT NULL
-        AND ce.valuenum REGEXP '^[0-9]+$' AND CAST(ce.valuenum AS UNSIGNED) > 1
-        
-        """
-
-
-        
-        fetch_chartevents=pd.read_sql(text(SQL), ENG)
-        fetch_chartevents.to_csv(f"Hyperkalemia/CSV/{adm_table}/fetch_chartevents.csv", index=False, encoding="utf-8-sig")
-        print("chartevents OK")
-        #檢驗
-        # 腎絲球過濾率	GFR, eGFR	50920	Estimated GFR (MDRD equation)
-        # 尿素氮	BUN	51006	Urea Nitrogen
-        # 肌酸酐	Serum Cr	50912	Creatinine
-
-        # 白蛋白	Albumin	50862	Albumin
-        # 血色素	Hb	50811	Hemoglobin
-        # 游離鈣	iCa	50808	Free Calcium
-        # 血磷	P (Phosphate)	50970	Phosphate
-        # 尿酸	UA (Uric Acid)	51007	Uric Acid
-        # 總膽固醇	Chol (Total Cholesterol)	50907	Cholesterol, Total
-        # 三酸甘油脂	TG (Triglycerides)	50998	Triglycerides
-        # 低密度膽固醇	LDL-C	50905	Cholesterol, LDL, Calculated
-        # 血鈉	Na (Sodium)	50983	Sodium
-        # 血鉀	K (Potassium)	50971	Potassium
-        # 糖化血色素	HbA1C	50852	% Hemoglobin A1c
-        # 空腹血糖	FPG, AC sugar	50931	Glucose (血糖項目較多，需搭配 charttime 判斷)
-        # 24 小時蛋白尿	PROT (Protein)	51002	Protein, Urine (可能需要結合 charttime 和 specimen 資訊)
-
-        SQL = f"""
-        SELECT s.stay_id, le.charttime, UPPER(dl.label) AS label, le.valuenum
-        FROM labevents le
-        JOIN d_labitems dl ON dl.itemid = le.itemid
-        JOIN {adm_table} s ON s.hadm_id = le.hadm_id and s.AKI ='1'
-        WHERE le.valuenum IS NOT NULL
-            AND le.charttime >= s.t0 AND le.charttime < s.t_end
-            -- AND UPPER(dl.label) IN ('SODIUM', 'BICARBONATE', 'CHLORIDE', 'CREATININE', 'UREA NITROGEN', 'GLUCOSE')
-            -- AND le.itemid IN ('50920', '51006', '50912', '50862', '50811', '50808', '50970', '51007', '50907', '50998', '50905', '50983', '50971', '50852', '50931', '51002')
-
-
-            AND le.valuenum REGEXP '^[0-9]+(\\.[0-9]+)?$'
-            -- AND le.valuenum REGEXP '^[0-9]+$' AND CAST(le.valuenum AS UNSIGNED) > 1
-
-        """
-
-        if adm_table=="adm_potassium_view":
-            SQL = SQL+""" AND le.itemid IN ('50920', '51006', '50912', '50862', '50811', '50808', '50970', '51007', '50907', '50998', '50905', '50983',  '50852', '50931', '51002') """
-        if adm_table=="adm_low_sodim_view":#拿掉鈉
-            SQL = SQL+""" AND le.itemid IN ('50920', '51006', '50912', '50862', '50811', '50808', '50970', '51007', '50907', '50998', '50905',   '50852', '50931', '51002') """
-        if adm_table=="icu_adm_view":
-            SQL = SQL+""" AND le.itemid IN ('50862', '50811', '50808', '50970', '51007', '50907', '50998', '50905', '50983', '50971', '50852', '50931', '51002') """
-
-
-        fetch_labevents = pd.read_sql(text(SQL), ENG)
-        fetch_labevents.to_csv(f"Hyperkalemia/CSV/{adm_table}/fetch_labevents.csv", index=False, encoding="utf-8-sig")
-        print("labevents OK")
-
-        SQL = f"""
-         -- 病人在 ICU 期間的液體排出（Output）事件
-         -- 腎臟功能（最常用：尿量 < 0.5 mL/kg/hr → 可能 AKI）
-        SELECT oe.stay_id, oe.charttime, UPPER(di.label) AS label, oe.value AS valuenum
-        FROM outputevents oe
-        JOIN d_items di ON di.itemid = oe.itemid
-        JOIN {adm_table} s ON s.stay_id = oe.stay_id and s.AKI ='1'
-        WHERE oe.valueuom IS NOT NULL
-            AND oe.charttime >= s.t0 AND oe.charttime < s.t_end
-            AND UPPER(di.label) LIKE '%URINE%'
-            AND oe.value REGEXP '^[0-9]+(\\.[0-9]+)?$'
-            -- AND oe.value REGEXP '^[0-9]+$' AND CAST(oe.value AS UNSIGNED) > 1
-    
-        """
-        URINE = pd.read_sql(text(SQL), ENG)
-        URINE.to_csv(f"Hyperkalemia/CSV/{adm_table}/URINE.csv", index=False, encoding="utf-8-sig")
-
-        print("URINE OK")
-        if adm_table=="adm_potassium_view":
-            SQL = f"""
-            -- 高血鉀 母體
-            SELECT s.stay_id,
-                    MAX(CASE WHEN le.valuenum >= '5.5' THEN 1 ELSE 0 END) AS y_hk
-            FROM {adm_table} s
-            JOIN labevents le FORCE INDEX (idx_hadm_item_time_val) ON le.hadm_id = s.hadm_id
-            JOIN d_labitems dl ON dl.itemid = le.itemid
-            WHERE  le.charttime >= s.lbl_from AND le.charttime < s.lbl_to
-            -- AND UPPER(dl.label) LIKE '%POTASSIUM%'
-            and le.itemid ='50971'
-            AND le.valuenum REGEXP '^[0-9]+(\\.[0-9]+)?$'
-            -- and labevents in(50833,50971,52610)
-            
-            
-            GROUP BY s.stay_id
-            
-            """
-            POTASSIUM = pd.read_sql(text(SQL), ENG)
-            POTASSIUM.to_csv(f"Hyperkalemia/CSV/{adm_table}/POTASSIUM.csv", index=False, encoding="utf-8-sig")
-            print("POTASSIUM OK")
-        if adm_table=="adm_low_sodim_view":#低鈉母體
-
-            SQL = f"""
-            -- 低鈉母體
-            SELECT s.stay_id,
-                    MAX(CASE WHEN le.valuenum <= 130 THEN 1 ELSE 0 END) AS y_hk
-            FROM {adm_table} s
-            JOIN labevents le FORCE INDEX (idx_hadm_item_time_val) ON le.hadm_id = s.hadm_id
-            JOIN d_labitems dl ON dl.itemid = le.itemid
-            WHERE  le.charttime >= s.lbl_from AND le.charttime < s.lbl_to
-            -- AND UPPER(dl.label) LIKE '%SODIUM%'
-            and le.itemid ='50983'
-            AND le.valuenum REGEXP '^[0-9]+(\\.[0-9]+)?$'
-        
-            GROUP BY s.stay_id
-            
-            """
-            low_sodium = pd.read_sql(text(SQL), ENG)
-            low_sodium.to_csv(f"Hyperkalemia/CSV/{adm_table}/low_sodium.csv", index=False, encoding="utf-8-sig")
-
- 
-        SQL = """
-            
-            -- 住院中 高血鉀病患 POTASSIUM
-            
-            select
-                `i`.`subject_id` as `subject_id`,
-                `i`.`hadm_id` as `hadm_id`,
-                `i`.`stay_id` as `stay_id`,
-                `i`.`intime` as `t0`,
-                (`i`.`intime` + interval 24 hour) as `t_end`,
-                (`i`.`intime` + interval 24 hour) as `lbl_from`,
-                (`i`.`intime` + interval 48 hour) as `lbl_to`
-            from
-                (`icustays` `i`
-            join `patients` on
-                ((`patients`.`subject_id` = `i`.`subject_id`)
-                and (patients.`anchor_year_group` in ('2020 - 2022', '2014 - 2016'))
-                and (((patients.`anchor_age` + year(`i`.`intime`)) - patients.`anchor_year`) >= 18)
-                ))
-                where
-               
-            
-            """
-        if adm_table=="adm_potassium_view":
-          
-            
-            SQL = SQL +"""
-            EXISTS(
-                            select * from labevents lab 
-                            where lab.subject_id = i.subject_id and lab.hadm_id = i.hadm_id
-                            
-                            -- and lab.itemid in('50822','50971','52452','52610')
-                            and lab.itemid ='50971'
-                            AND lab.valuenum REGEXP '^[0-9]+(\\.[0-9]+)?$'
-                            and lab.valuenum >= '5.5'
-                            
-                            )
-
-            """
-            low_sodium = pd.read_sql(text(SQL), ENG)
-            low_sodium.to_csv("Hyperkalemia/CSV/adm_potassium_view.csv", index=False, encoding="utf-8-sig")
-        if adm_table=="adm_low_sodim_view":
-          
-            
-            SQL = SQL +"""
-            EXISTS(
-                select * from labevents lab 
-                where lab.subject_id = i.subject_id and lab.hadm_id = i.hadm_id
-                
-                -- and lab.itemid in('50824','50983','52455','52623')
-                and lab.itemid ='50983'
-                AND lab.valuenum REGEXP '^[0-9]+(\\.[0-9]+)?$'
-                and lab.valuenum <= '300'
-                
-            )
-
-            """
-            low_sodium = pd.read_sql(text(SQL), ENG)
-            low_sodium.to_csv("Hyperkalemia/CSV/adm_low_sodim_view.csv", index=False, encoding="utf-8-sig")
-        
-
-
-
-
-
-    
-    return 0
 
         
 
@@ -363,6 +150,25 @@ def to_hourly(df_long: pd.DataFrame, t0_df: pd.DataFrame) -> pd.DataFrame:
     df.sort_values(["stay_id","label","charttime"], inplace=True)
     df = df.groupby(["stay_id","label","time_index"], as_index=False).tail(1)#同一小時若多筆只留最新值
     return df[["stay_id","label","time_index","valuenum"]].rename(columns={"valuenum":"value"})
+
+def to_hourly_drug(df_drug: pd.DataFrame, stays: pd.DataFrame) -> pd.DataFrame:
+    """
+    將 prescriptions → 每小時藥物 exposure (0/1 指標)
+    """
+    if df_drug.empty:
+        return pd.DataFrame(columns=["stay_id", "time_index", "label", "value"])
+
+    df = df_drug.merge(stays[["stay_id", "t0"]], on="stay_id", how="left")
+
+    df["offset_h"] = (pd.to_datetime(df["starttime"]) - pd.to_datetime(df["t0"])).dt.total_seconds()/7200.0
+    df = df[(df["offset_h"] >= 0) & (df["offset_h"] < SEQ_HOURS)].copy()
+
+    df["time_index"] = df["offset_h"].round().astype(int)
+
+    # 每一小時每一類藥物取 1（有給藥就算 1）
+    df["value"] = 1
+
+    return df[["stay_id", "time_index", "label", "value"]]
 
 def build_tensor(char_h: pd.DataFrame, lab_h: pd.DataFrame, ur_h: pd.DataFrame, stays: pd.DataFrame) -> Tuple[np.ndarray, List[str], pd.DataFrame]:
     try:
@@ -420,14 +226,15 @@ def build_tensor(char_h: pd.DataFrame, lab_h: pd.DataFrame, ur_h: pd.DataFrame, 
     except Exception as Error:
         print(str(Error))
 
-def build_tensor2(char_h: pd.DataFrame, lab_h: pd.DataFrame, ur_h: pd.DataFrame, stays: pd.DataFrame) -> Tuple[np.ndarray, List[str], pd.DataFrame]:
+def build_tensor2(char_h: pd.DataFrame, lab_h: pd.DataFrame, ur_h: pd.DataFrame,drug_h: pd.DataFrame, stays: pd.DataFrame
+                  ) -> Tuple[np.ndarray, List[str], pd.DataFrame]:
     """
     將 long format（char/lab/output 每筆事件一列）轉為三維張量 (N × T × F)
     並處理：label→feature 映射、時間網格補齊、缺值處理、標準化。
     """
 
     # 1) 合併來源
-    frames = [x for x in [char_h, lab_h, ur_h] if x is not None and not x.empty]
+    frames = [x for x in [char_h, lab_h, ur_h,drug_h] if x is not None and not x.empty]
     if not frames:
         raise RuntimeError("No hourly features extracted.")
     long = pd.concat(frames, ignore_index=True)
@@ -921,10 +728,18 @@ def main(flg):
         #select hadm_id ,admittime ,dischtime ,aki,potassium ,low_sodium  from z_ckd_adm zca 
         ydf = pd.read_csv(f"D:/project/研究/CSV/{flg}/POTASSIUM.csv")#要預測的結果
         stays = pd.read_csv(f"D:/project/研究/CSV/{flg}/adm.csv")#stays 是模型的「全部樣本」
+        df_drug = pd.read_csv(f"D:/project/研究/CSV/{flg}/高血鉀用藥.csv")
+
     if flg=="SODIUM_20251016":
         #df_lab= df_lab[df_lab['label'] != 'POTASSIUM']
         #df_lab= df_lab[df_lab['label'] != 'Potassium, Whole Blood']
         df_lab = df_lab[~df_lab['label'].isin(['SODIUM', 'Sodium'])]
+        #原因：避免資料洩漏（Data Leakage）
+        # 您要預測的是「24-48小時內是否會發生低鈉」
+        #如果訓練資料中包含 0-24 小時的鈉離子值
+        #模型會直接學到「鈉低 → 未來低鈉」這種顯而易見的關係
+        # 這會讓模型「作弊」，在真實場景中無法使用
+
         #select hadm_id ,admittime ,dischtime ,aki,potassium ,low_sodium  from z_ckd_adm zca 
         ydf = pd.read_csv(f"Hyperkalemia/CSV/{flg}/SODIUM.csv")#要預測的結果
         stays = pd.read_csv(f"Hyperkalemia/CSV/{flg}/adm.csv")#stays 是模型的「全部樣本」
@@ -933,8 +748,9 @@ def main(flg):
     char_h = to_hourly(df_char, stays)
     lab_h  = to_hourly(df_lab,  stays)
     ur_h   = to_hourly(df_ur,   stays)
+    drug_h = to_hourly_drug(df_drug, stays)
 
-    X, feat_cols, sid_df = build_tensor3(char_h, lab_h, ur_h, stays)
+    X, feat_cols, sid_df = build_tensor2(char_h, lab_h, ur_h,drug_h, stays)
 
     print("==> 取標籤（24–48h 高血鉀）")
  
@@ -1011,6 +827,11 @@ def main(flg):
                    "k_cutoff": K_CUTOFF}, f, ensure_ascii=False, indent=2)
     np.save(os.path.join(mdir, "test_prob.npy"), te_prob)#模型預測值
     np.save(os.path.join(mdir, "test_y.npy"),   yte)#這是測試集的 真實標籤 (ground truth)，通常是 0 或 1
+    # 保存 X_train 和 X_test 用於 SHAP 分析
+    np.save(os.path.join(mdir, "X_train.npy"), Xtr)  # shape (N_train, T, F)
+    np.save(os.path.join(mdir, "X_test.npy"), Xte)   # shape (N_test, T, F)
+    # 保存特徵名稱
+    np.save(os.path.join(mdir, "feature_names.npy"), np.array(feat_cols))  # shape (F,)
     # te_prob:
     # 測試集每個樣本的 預測機率 (通常是 sigmoid 輸出的值，介於 0~1)。
     # 存成 test_prob.npy，方便後續做 ROC、PR、Calibration、SHAP 分析。
@@ -1022,3 +843,53 @@ def main(flg):
     print("完成，Artifacts 於：", os.path.abspath(mdir))
 
     
+SQL="""
+
+select
+CASE WHEN a.drug LIKE '%lisinopril%' THEN 'RAASi'
+    WHEN a.drug LIKE '%enalapril%' THEN 'RAASi'
+    WHEN a.drug LIKE '%ramipril%' THEN 'RAASi'
+    WHEN a.drug LIKE '%losartan%' THEN 'RAASi'
+    WHEN a.drug LIKE '%irbesartan%' THEN 'RAASi'
+    WHEN a.drug LIKE '%spironolactone%' THEN 'K_SPARING'
+    WHEN a.drug LIKE '%eplerenone%' THEN 'K_SPARING'
+    WHEN a.drug LIKE '%amiloride%' THEN 'K_SPARINGSi'
+    WHEN a.drug LIKE '%triamterene%' THEN 'K_SPARING'
+    WHEN a.drug LIKE '%heparin%' THEN 'HEPARIN'
+    WHEN a.drug LIKE '%enoxaparin%' THEN 'HEPARIN'
+    WHEN a.drug LIKE '%ibuprofen%' THEN 'NSAID'
+    WHEN a.drug LIKE '%ketorolac%' THEN 'NSAID'
+    WHEN a.drug LIKE '%furosemide%' THEN 'LOOP'
+    WHEN a.drug LIKE '%bumetanide%' THEN 'LOOP'
+    WHEN a.drug LIKE '%torsemide%' THEN 'LOOP'
+    WHEN a.drug LIKE '%hydrochlorothiazide%' THEN 'THIAZIDE'
+    WHEN a.drug LIKE '%chlorthalidone%' THEN 'THIAZIDE'
+    END
+
+
+
+ ,a.* from prescriptions a
+inner join z_k_adm b on(b.subject_id=a.subject_id and b.hadm_id=a.hadm_id)
+where (LOWER(a.drug) like '%lisinopril%'
+or LOWER(a.drug) like '%enalapril%'
+or LOWER(a.drug) like '%ramipril%'
+or LOWER(a.drug) like '%losartan%'
+or LOWER(a.drug) like '%valsartan%'
+or LOWER(a.drug) like '%irbesartan%'
+or LOWER(a.drug) like '%spironolactone%'
+or LOWER(a.drug) like '%eplerenone%'
+or LOWER(a.drug) like '%amiloride%'
+or LOWER(a.drug) like '%triamterene%'
+
+or LOWER(a.drug) like '%heparin%'
+or LOWER(a.drug) like '%enoxaparin%'
+or LOWER(a.drug) like '%ibuprofen%'
+or LOWER(a.drug) like '%ketorolac%'
+or LOWER(a.drug) like '%furosemide%'
+or LOWER(a.drug) like '%bumetanide%'
+or LOWER(a.drug) like '%torsemide%'
+or LOWER(a.drug) like '%hydrochlorothiazide%'
+or LOWER(a.drug) like '%chlorthalidone%'
+)
+"""
+
